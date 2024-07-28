@@ -1,14 +1,20 @@
 use anyhow::{anyhow, Result};
 
-pub(crate) fn parse_dhcp_packet(buf: &[u8]) -> Result<Packet> {
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum DhcpError {
+    PacketTooShort,
+    InvalidOpCode,
+}
+
+pub(crate) fn parse_dhcp_packet(buf: &[u8]) -> Result<Packet, DhcpError> {
     if buf.len() < 236 {
-        return Err(anyhow!("Packet is too short"));
+        return Err(DhcpError::PacketTooShort);
     }
 
     let op = match buf[0] {
         1 => OpType::BOOTREQUEST,
         2 => OpType::BOOTREPLY,
-        _ => panic!("Invalid op code"),
+        _ => return Err(DhcpError::InvalidOpCode),
     };
     let htype = buf[1];
     let hlen = buf[2];
@@ -137,7 +143,7 @@ impl RawPacket {
 
     // Implement setters for the remaining fields
 
-    pub(crate) fn into_packet(self) -> Result<Packet> {
+    pub(crate) fn into_packet(self) -> Result<Packet, DhcpError> {
         parse_dhcp_packet(&self.buf)
     }
 }
@@ -160,20 +166,28 @@ pub(crate) enum MessageType {
     DHCPINFORM,
 }
 
+impl TryInto<MessageType> for u8 {
+    type Error = anyhow::Error;
+
+    fn try_into(self) -> Result<MessageType> {
+        match self {
+            1 => Ok(MessageType::DHCPDISCOVER),
+            2 => Ok(MessageType::DHCPOFFER),
+            3 => Ok(MessageType::DHCPREQUEST),
+            4 => Ok(MessageType::DHCPACK),
+            5 => Ok(MessageType::DHCPNAK),
+            6 => Ok(MessageType::DHCPRELEASE),
+            7 => Ok(MessageType::DHCPDECLINE),
+            8 => Ok(MessageType::DHCPINFORM),
+            _ => Err(anyhow!("Invalid message type")),
+        }
+    }
+}
+
 impl Packet {
     pub(crate) fn get_message_type(&self) -> Result<MessageType> {
         match self.options.iter().find(|o| o.code == 53) {
-            Some(option) => match option.value {
-                1 => Ok(MessageType::DHCPDISCOVER),
-                2 => Ok(MessageType::DHCPOFFER),
-                3 => Ok(MessageType::DHCPREQUEST),
-                4 => Ok(MessageType::DHCPACK),
-                5 => Ok(MessageType::DHCPNAK),
-                6 => Ok(MessageType::DHCPRELEASE),
-                7 => Ok(MessageType::DHCPDECLINE),
-                8 => Ok(MessageType::DHCPINFORM),
-                _ => Err(anyhow!("Invalid message type")),
-            },
+            Some(option) => option.value.try_into(),
             None => Err(anyhow!("Missing message type option")),
         }
     }
@@ -181,7 +195,7 @@ impl Packet {
 
 #[cfg(test)]
 mod tests {
-    use std::{os::linux::raw, rc::Rc};
+    use std::result;
 
     use super::*;
 
@@ -196,8 +210,6 @@ mod tests {
         raw_packet.set_xid(10);
         raw_packet.set_secs(10);
         raw_packet.set_broadcast(true);
-
-        let my_ip = [192u8, 168, 1, 1];
 
         let result = raw_packet.into_packet();
         assert!(result.is_ok());
@@ -247,5 +259,26 @@ mod tests {
             Ok(message_type) => assert_eq!(MessageType::DHCPDISCOVER, message_type),
             Err(e) => panic!("Unexpected error: {:?}", e),
         }
+    }
+
+    #[test]
+    fn should_return_invalid_opcode_error() {
+        let mut buf = [0; 236];
+        buf[0] = 3;
+
+        let result = parse_dhcp_packet(&buf);
+
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err(), DhcpError::InvalidOpCode);
+    }
+
+    #[test]
+    fn should_fail_when_not_enough_data_is_received() {
+        let buf = [0; 235];
+
+        let result = parse_dhcp_packet(&buf);
+
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err(), DhcpError::PacketTooShort);
     }
 }

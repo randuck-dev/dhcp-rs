@@ -1,6 +1,7 @@
 use std::{fmt::format, net::UdpSocket};
 
 use crate::dhcp;
+use std::time::Instant;
 
 pub struct DhcpServer {
     port: u16,
@@ -32,6 +33,8 @@ impl DhcpServer {
             match socket.recv_from(&mut buf) {
                 Ok((size, src)) => {
                     println!("Received {} bytes from {}", size, src);
+                    let start = Instant::now();
+
                     match dhcp::parse_dhcp_packet(&buf) {
                         Ok(packet) => match packet.get_message_type() {
                             Ok(message_type) => {
@@ -42,9 +45,11 @@ impl DhcpServer {
                             }
                         },
                         Err(e) => {
-                            eprintln!("Failed to parse packet: {}", e);
+                            eprintln!("Failed to parse packet: {:?}", e);
                         }
                     }
+                    let duration = start.elapsed();
+                    println!("Execution time: {:?}", duration);
                 }
                 Err(e) => {
                     eprintln!("Failed to receive data: {}", e);
