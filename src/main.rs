@@ -1,8 +1,7 @@
 mod dhcp;
-mod server;
 
 fn main() {
-    let server = server::DhcpServer::new();
+    let server = dhcp::server::DhcpServer::new();
 
     server.start();
 }
