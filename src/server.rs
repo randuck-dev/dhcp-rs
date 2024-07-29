@@ -1,7 +1,8 @@
 use std::{fmt::format, net::UdpSocket};
 
-use crate::dhcp;
 use std::time::Instant;
+
+use crate::dhcp::lib::parse_dhcp_packet;
 
 pub struct DhcpServer {
     port: u16,
@@ -18,9 +19,10 @@ impl DhcpServer {
     }
 
     pub fn start(&self) {
-        println!("Starting DHCP server");
+        let address = format!("127.0.0.1:{}", DHCP_SERVER_PORT);
+        println!("DHCP Server started listening on address: {}", address);
 
-        let socket = match UdpSocket::bind(format!("127.0.0.1:{}", DHCP_SERVER_PORT)) {
+        let socket = match UdpSocket::bind(address) {
             Ok(s) => s,
             Err(e) => {
                 eprintln!("Failed to bind to port {}: {}", DHCP_SERVER_PORT, e);
@@ -35,7 +37,7 @@ impl DhcpServer {
                     println!("Received {} bytes from {}", size, src);
                     let start = Instant::now();
 
-                    match dhcp::parse_dhcp_packet(&buf) {
+                    match parse_dhcp_packet(&buf) {
                         Ok(packet) => match packet.get_message_type() {
                             Ok(message_type) => {
                                 println!("Message type: {:?}", message_type);

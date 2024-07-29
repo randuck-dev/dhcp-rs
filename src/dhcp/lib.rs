@@ -1,10 +1,8 @@
-use anyhow::{anyhow, Result};
+use anyhow::Result;
 
-#[derive(Debug, PartialEq, Eq)]
-pub(crate) enum DhcpError {
-    PacketTooShort,
-    InvalidOpCode,
-}
+use super::{errors::DhcpError, messagetype::MessageType, option::Option, packet::Packet};
+
+const MAGIC_COOKIE: Option = Option::MagicCookie([99, 130, 83, 99]);
 
 pub(crate) fn parse_dhcp_packet(buf: &[u8]) -> Result<Packet, DhcpError> {
     if buf.len() < 236 {
@@ -32,19 +30,7 @@ pub(crate) fn parse_dhcp_packet(buf: &[u8]) -> Result<Packet, DhcpError> {
     let chaddr = buf[28..44].try_into().expect("invalid chaddr length");
     let sname = buf[44..108].try_into().expect("invalid sname length");
     let file = buf[108..236].try_into().expect("invalid file length");
-    let mut options = Vec::new();
-
-    for i in (236..buf.len()).step_by(2) {
-        let code = buf[i];
-        let value = buf[i + 1];
-
-        if code == 0 {
-            break;
-        }
-
-        let option = Option { code, value };
-        options.push(option);
-    }
+    let options = parse_options(buf)?;
 
     Ok(Packet {
         op,
@@ -65,32 +51,32 @@ pub(crate) fn parse_dhcp_packet(buf: &[u8]) -> Result<Packet, DhcpError> {
     })
 }
 
-#[derive(Debug)]
-pub(crate) struct Packet {
-    op: OpType,
-    htype: u8,
-    hlen: u8,
-    hops: u8,
-    xid: u32,
-    secs: u16,
-    flags: Flags,
-    ciaddr: [u8; 4],
-    yiaddr: [u8; 4],
-    siaddr: [u8; 4],
-    giaddr: [u8; 4],
-    chaddr: [u8; 16],
-    sname: [u8; 64],
-    file: [u8; 128],
+fn parse_options(buf: &[u8]) -> Result<Vec<Option>, DhcpError> {
+    let mut options = Vec::new();
 
-    // RFC951 (BOOTP) states that there should be a magic number at the beginning of this field, which consists of 4 octets.
-    // RFC1533 (DHCP Options and BOOTP Vendor Extensions) states that these octets are 99, 130, 83, 99
-    options: Vec<Option>,
-}
+    let magic_cookie = &buf[236..240];
+    if magic_cookie != [99, 130, 83, 99] {
+        return Err(DhcpError::InvalidMagicCookie);
+    }
 
-#[derive(Debug)]
-pub(crate) struct Option {
-    code: u8,
-    value: u8,
+    options.push(Option::MagicCookie([99, 130, 83, 99]));
+
+    for i in (240..buf.len()).step_by(2) {
+        let code = buf[i];
+        let value = buf[i + 1];
+
+        if code == 0 {
+            break;
+        }
+
+        let option = match code {
+            53 => Option::MessageType(value.try_into()?),
+            _ => Option::Unknown(code, value),
+        };
+        options.push(option);
+    }
+
+    Ok(options)
 }
 
 #[derive(Debug)]
@@ -106,6 +92,22 @@ pub(crate) struct RawPacket {
 impl RawPacket {
     pub(crate) fn new() -> Self {
         RawPacket { buf: [0; 1024] }
+    }
+
+    pub(crate) fn default() -> Self {
+        let mut p = RawPacket::new();
+        p.set_op(OpType::BOOTREQUEST);
+        p.set_htype(1);
+        p.set_hlen(6);
+        p.set_hops(0);
+        p.set_xid(10);
+        p.set_secs(10);
+        p.set_broadcast(true);
+        p.set_options(vec![
+            MAGIC_COOKIE,
+            Option::MessageType(MessageType::DHCPDISCOVER),
+        ]);
+        p
     }
 
     pub(crate) fn set_op(&mut self, op: OpType) {
@@ -141,6 +143,34 @@ impl RawPacket {
         self.buf[10] = if broadcast { 0b10000000 } else { 0 };
     }
 
+    pub(crate) fn set_options(&mut self, options: Vec<Option>) {
+        let mut i = 236;
+        if options.is_empty() {
+            return;
+        }
+
+        for option in options {
+            match option {
+                Option::MagicCookie(_) => {
+                    self.buf[i..i + 4].copy_from_slice(&[99, 130, 83, 99]);
+                    i += 4;
+                }
+                Option::MessageType(value) => {
+                    self.buf[i] = 53;
+                    self.buf[i + 1] = value.try_into().unwrap();
+                    i += 2;
+                }
+                Option::Unknown(code, value) => {
+                    self.buf[i] = code;
+                    self.buf[i + 1] = value;
+                    i += 2;
+                }
+            }
+        }
+
+        self.buf[i] = 0;
+    }
+
     // Implement setters for the remaining fields
 
     pub(crate) fn into_packet(self) -> Result<Packet, DhcpError> {
@@ -154,66 +184,18 @@ pub(crate) enum OpType {
     BOOTREPLY,
 }
 
-#[derive(Debug, PartialEq, Eq)]
-pub(crate) enum MessageType {
-    DHCPDISCOVER,
-    DHCPOFFER,
-    DHCPREQUEST,
-    DHCPACK,
-    DHCPNAK,
-    DHCPRELEASE,
-    DHCPDECLINE,
-    DHCPINFORM,
-}
-
-impl TryInto<MessageType> for u8 {
-    type Error = anyhow::Error;
-
-    fn try_into(self) -> Result<MessageType> {
-        match self {
-            1 => Ok(MessageType::DHCPDISCOVER),
-            2 => Ok(MessageType::DHCPOFFER),
-            3 => Ok(MessageType::DHCPREQUEST),
-            4 => Ok(MessageType::DHCPACK),
-            5 => Ok(MessageType::DHCPNAK),
-            6 => Ok(MessageType::DHCPRELEASE),
-            7 => Ok(MessageType::DHCPDECLINE),
-            8 => Ok(MessageType::DHCPINFORM),
-            _ => Err(anyhow!("Invalid message type")),
-        }
-    }
-}
-
-impl Packet {
-    pub(crate) fn get_message_type(&self) -> Result<MessageType> {
-        match self.options.iter().find(|o| o.code == 53) {
-            Some(option) => option.value.try_into(),
-            None => Err(anyhow!("Missing message type option")),
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
-    use std::result;
-
     use super::*;
 
     #[test]
     fn test_parse_packet() {
-        let mut raw_packet = RawPacket::new();
+        let raw_packet = RawPacket::default();
 
-        raw_packet.set_op(OpType::BOOTREQUEST);
-        raw_packet.set_htype(1);
-        raw_packet.set_hlen(6);
-        raw_packet.set_hops(0);
-        raw_packet.set_xid(10);
-        raw_packet.set_secs(10);
-        raw_packet.set_broadcast(true);
-
-        let result = raw_packet.into_packet();
-        assert!(result.is_ok());
-        let packet = result.unwrap();
+        let packet = match raw_packet.into_packet() {
+            Ok(packet) => packet,
+            Err(e) => panic!("Failed to parse packet: {:?}", e),
+        };
 
         assert_eq!(OpType::BOOTREQUEST, packet.op);
         assert_eq!(1, packet.htype);
@@ -225,40 +207,14 @@ mod tests {
     }
 
     #[test]
-    fn test_get_msg_type_should_return_correct_message_type() {
-        let packet = Packet {
-            op: OpType::BOOTREQUEST,
-            htype: 1,
-            hlen: 6,
-            hops: 0,
-            xid: 10,
-            secs: 10,
-            flags: Flags { broadcast: true },
-            ciaddr: [192u8, 168, 1, 1],
-            yiaddr: [0u8, 0, 0, 0],
-            siaddr: [0u8, 0, 0, 0],
-            giaddr: [0u8, 0, 0, 0],
-            chaddr: [0u8; 16],
-            sname: [0u8; 64],
-            file: [0u8; 128],
-            options: vec![
-                Option {
-                    code: 99,
-                    value: 130,
-                },
-                Option {
-                    code: 83,
-                    value: 99,
-                },
-                Option { code: 53, value: 1 },
-            ],
-        };
+    fn should_fail_on_non_present_magic_cookie() {
+        let mut raw_packet = RawPacket::default();
+        raw_packet.set_options(vec![Option::MessageType(MessageType::DHCPDISCOVER)]);
 
-        let result = packet.get_message_type();
-        match result {
-            Ok(message_type) => assert_eq!(MessageType::DHCPDISCOVER, message_type),
-            Err(e) => panic!("Unexpected error: {:?}", e),
-        }
+        let result = raw_packet.into_packet();
+
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err(), DhcpError::InvalidMagicCookie);
     }
 
     #[test]

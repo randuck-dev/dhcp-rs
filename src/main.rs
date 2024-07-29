@@ -1,5 +1,3 @@
-use dhcp::RawPacket;
-
 mod dhcp;
 mod server;
 
