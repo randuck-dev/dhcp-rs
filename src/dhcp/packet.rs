@@ -33,4 +33,16 @@ impl Packet {
             })
             .ok_or_else(|| anyhow!("Message type not found"))
     }
+
+    pub(crate) fn get_client_identifier(&self) -> Result<String> {
+        self.options
+            .iter()
+            .find_map(|option| match option {
+                Option::ClientIdentifier(_, id) => {
+                    Some(id.iter().map(|b| format!("{:02x}", b)).collect())
+                }
+                _ => None,
+            })
+            .ok_or_else(|| anyhow!("Client identifier not found"))
+    }
 }

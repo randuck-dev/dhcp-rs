@@ -1,11 +1,15 @@
+use std::collections::HashMap;
 use std::{fmt::format, net::UdpSocket};
 
 use std::time::Instant;
 
+use crate::dhcp::lease::{Lease, MACAddress};
 use crate::dhcp::lib::parse_dhcp_packet;
 
 pub struct DhcpServer {
     port: u16,
+
+    lease_cache: HashMap<MACAddress, Lease>,
 }
 
 const DHCP_SERVER_PORT: u16 = 50010;
@@ -15,6 +19,7 @@ impl DhcpServer {
     pub fn new() -> Self {
         DhcpServer {
             port: DHCP_SERVER_PORT,
+            lease_cache: HashMap::new(),
         }
     }
 
@@ -38,12 +43,12 @@ impl DhcpServer {
                     let start = Instant::now();
 
                     match parse_dhcp_packet(&buf) {
-                        Ok(packet) => match packet.get_message_type() {
+                        Ok(packet) => match packet.get_client_identifier() {
                             Ok(message_type) => {
-                                println!("Message type: {:?}", message_type);
+                                println!("CI: {:?}", message_type);
                             }
                             Err(e) => {
-                                eprintln!("Failed to get message type: {}", e);
+                                eprintln!("Failed: {}", e);
                             }
                         },
                         Err(e) => {

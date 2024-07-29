@@ -61,19 +61,35 @@ fn parse_options(buf: &[u8]) -> Result<Vec<Option>, DhcpError> {
 
     options.push(Option::MagicCookie([99, 130, 83, 99]));
 
-    for i in (240..buf.len()).step_by(2) {
+    let mut i = 240;
+    while i < buf.len() {
         let code = buf[i];
-        let value = buf[i + 1];
 
         if code == 0 {
             break;
         }
 
-        let option = match code {
-            53 => Option::MessageType(value.try_into()?),
-            _ => Option::Unknown(code, value),
+        let (inc, option) = match code {
+            1 => (6, Option::SubnetMask(buf[i + 2..i + 6].try_into().unwrap())),
+            53 => (3, Option::MessageType(buf[i + 2].try_into()?)),
+            61 => {
+                let len = buf[i + 1] as usize;
+                let t = buf[i + 2];
+                let start = i + 2;
+                let end = start + len;
+
+                // increment for: CODE + LENGTH + TYPE + LEN(IDENTIFIER)
+                let inc = 2 + len;
+                (inc, Option::ClientIdentifier(t, buf[start..end].to_vec()))
+            }
+            // This is the end of the options
+            255 => break,
+
+            _ => panic!("Unknown option code: {}", code),
         };
         options.push(option);
+
+        i += inc;
     }
 
     Ok(options)
@@ -106,6 +122,7 @@ impl RawPacket {
         p.set_options(vec![
             MAGIC_COOKIE,
             Option::MessageType(MessageType::DHCPDISCOVER),
+            Option::SubnetMask([255, 255, 255, 0]),
         ]);
         p
     }
@@ -155,10 +172,22 @@ impl RawPacket {
                     self.buf[i..i + 4].copy_from_slice(&[99, 130, 83, 99]);
                     i += 4;
                 }
+                Option::SubnetMask(mask) => {
+                    self.buf[i] = 1;
+                    self.buf[i + 1] = 4;
+                    self.buf[i + 2..i + 6].copy_from_slice(&mask);
+                    i += 6;
+                }
                 Option::MessageType(value) => {
                     self.buf[i] = 53;
                     self.buf[i + 1] = value.try_into().unwrap();
                     i += 2;
+                }
+                Option::ClientIdentifier(t, identifier) => {
+                    self.buf[i] = 61;
+                    self.buf[i + 1] = t;
+                    self.buf[i + 2..i + 2 + identifier.len()].copy_from_slice(&identifier);
+                    i += 2 + identifier.len();
                 }
                 Option::Unknown(code, value) => {
                     self.buf[i] = code;
@@ -203,7 +232,18 @@ mod tests {
         assert_eq!(0, packet.hops);
         assert_eq!(10, packet.xid);
         assert_eq!(10, packet.secs);
-        assert_eq!(true, packet.flags.broadcast)
+        assert_eq!(true, packet.flags.broadcast);
+
+        let subnet_mask = packet
+            .options
+            .iter()
+            .find_map(|option| match option {
+                Option::SubnetMask(mask) => Some(mask),
+                _ => None,
+            })
+            .unwrap();
+
+        assert_eq!([255, 255, 255, 0], *subnet_mask);
     }
 
     #[test]

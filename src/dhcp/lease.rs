@@ -1,8 +1,9 @@
-type IPAddress = [u8; 4];
-type MACAddress = [u8; 6];
+use std::net::Ipv4Addr;
 
-struct Lease {
-    ip: IPAddress,
+pub type MACAddress = [u8; 6];
+
+pub struct Lease {
+    ip: Ipv4Addr,
     mac: MACAddress,
     expires: u64,
 
