@@ -75,11 +75,11 @@ fn parse_options(buf: &[u8]) -> Result<Vec<Option>, DhcpError> {
             61 => {
                 let len = buf[i + 1] as usize;
                 let t = buf[i + 2];
-                let start = i + 2;
+                let start = i + 3;
                 let end = start + len;
 
                 // increment for: CODE + LENGTH + TYPE + LEN(IDENTIFIER)
-                let inc = 2 + len;
+                let inc = 3 + len;
                 (inc, Option::ClientIdentifier(t, buf[start..end].to_vec()))
             }
             // This is the end of the options
@@ -180,8 +180,9 @@ impl RawPacket {
                 }
                 Option::MessageType(value) => {
                     self.buf[i] = 53;
-                    self.buf[i + 1] = value.try_into().unwrap();
-                    i += 2;
+                    self.buf[i + 1] = 1;
+                    self.buf[i + 2] = value.try_into().unwrap();
+                    i += 3;
                 }
                 Option::ClientIdentifier(t, identifier) => {
                     self.buf[i] = 61;
