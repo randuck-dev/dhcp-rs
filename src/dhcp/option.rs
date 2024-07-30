@@ -7,5 +7,6 @@ pub enum Option {
     TimeOffset(u32),               // 2
     MessageType(MessageType),      // 53
     ClientIdentifier(u8, Vec<u8>), // 61
+    End(),
     Unknown(u8, u8),
 }

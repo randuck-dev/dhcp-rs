@@ -79,6 +79,7 @@ fn parse_options(buf: &[u8]) -> Result<Vec<Option>, DhcpError> {
             61 => {
                 let len = buf[i + 1] as usize;
                 let t = buf[i + 2];
+
                 let start = i + 3;
                 let end = start + len;
 
@@ -127,6 +128,8 @@ impl RawPacket {
             MAGIC_COOKIE,
             Option::MessageType(MessageType::DHCPDISCOVER),
             Option::SubnetMask([255, 255, 255, 0]),
+            Option::ClientIdentifier(1, vec![1, 2, 3]),
+            Option::End(),
         ]);
         p
     }
@@ -196,14 +199,19 @@ impl RawPacket {
                 }
                 Option::ClientIdentifier(t, identifier) => {
                     self.buf[i] = 61;
-                    self.buf[i + 1] = t;
-                    self.buf[i + 2..i + 2 + identifier.len()].copy_from_slice(&identifier);
-                    i += 2 + identifier.len();
+                    self.buf[i + 1] = identifier.len() as u8;
+                    self.buf[i + 2] = t;
+                    self.buf[i + 3..i + 3 + identifier.len()].copy_from_slice(&identifier);
+                    i += 3 + identifier.len();
                 }
                 Option::Unknown(code, value) => {
                     self.buf[i] = code;
                     self.buf[i + 1] = value;
                     i += 2;
+                }
+                Option::End() => {
+                    self.buf[i] = 255;
+                    i += 1;
                 }
             }
         }
@@ -255,6 +263,27 @@ mod tests {
             .unwrap();
 
         assert_eq!([255, 255, 255, 0], *subnet_mask);
+    }
+
+    #[test]
+    fn should_parse_client_identifier() {
+        let mut raw_packet = RawPacket::default();
+
+        let packet = raw_packet.into_packet().unwrap();
+
+        let parsed_client_identifier = packet
+            .options
+            .iter()
+            .find_map(|option| match option {
+                Option::ClientIdentifier(t, identifier) => Some((t, identifier)),
+                _ => None,
+            })
+            .unwrap();
+
+        assert_eq!(1, *parsed_client_identifier.0);
+        assert_eq!(1, parsed_client_identifier.1[0]);
+        assert_eq!(2, parsed_client_identifier.1[1]);
+        assert_eq!(3, parsed_client_identifier.1[2]);
     }
 
     #[test]
