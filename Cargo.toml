@@ -6,6 +6,12 @@ edition = "2021"
 
 [dependencies]
 anyhow = "1.0.86"
+log = { version = "0.4.22", features = [
+    "kv",
+    "max_level_debug",
+    "release_max_level_info",
+] }
+simple_logger = "5.0.0"
 
 [build-dependencies]
 

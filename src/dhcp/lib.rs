@@ -9,6 +9,7 @@ pub(crate) fn parse_dhcp_packet(buf: &[u8]) -> Result<Packet, DhcpError> {
         return Err(DhcpError::PacketTooShort);
     }
 
+    let msg = "The byte array must be at least 236 to be of legal size";
     let op = match buf[0] {
         1 => OpType::BOOTREQUEST,
         2 => OpType::BOOTREPLY,
@@ -17,19 +18,22 @@ pub(crate) fn parse_dhcp_packet(buf: &[u8]) -> Result<Packet, DhcpError> {
     let htype = buf[1];
     let hlen = buf[2];
     let hops = buf[3];
-    let xid = u32::from_be_bytes(buf[4..8].try_into().expect("Invalid xid length"));
-    let secs = u16::from_be_bytes(buf[8..10].try_into().expect("invalid secs length"));
+
+    let xid = u32::from_be_bytes(buf[4..8].try_into().expect(msg));
+    let secs = u16::from_be_bytes(buf[8..10].try_into().expect(msg));
+
     let flags = Flags {
         broadcast: buf[10] & 0b10000000 != 0,
     };
 
-    let ciaddr = buf[12..16].try_into().expect("Invalid ciaddr length");
-    let yiaddr = buf[16..20].try_into().expect("invalid yiaddr length");
-    let siaddr = buf[20..24].try_into().expect("invalid siaddr length");
-    let giaddr = buf[24..28].try_into().expect("invalid giaddr length");
-    let chaddr = buf[28..44].try_into().expect("invalid chaddr length");
-    let sname = buf[44..108].try_into().expect("invalid sname length");
-    let file = buf[108..236].try_into().expect("invalid file length");
+    let ciaddr = buf[12..16].try_into().expect(msg);
+    let yiaddr = buf[16..20].try_into().expect(msg);
+    let siaddr = buf[20..24].try_into().expect(msg);
+    let giaddr = buf[24..28].try_into().expect(msg);
+    let chaddr = buf[28..44].try_into().expect(msg);
+    let sname = buf[44..108].try_into().expect(msg);
+    let file = buf[108..236].try_into().expect(msg);
+
     let options = parse_options(buf)?;
 
     Ok(Packet {
@@ -176,6 +180,12 @@ impl RawPacket {
                     self.buf[i] = 1;
                     self.buf[i + 1] = 4;
                     self.buf[i + 2..i + 6].copy_from_slice(&mask);
+                    i += 6;
+                }
+                Option::TimeOffset(v) => {
+                    self.buf[i] = 2;
+                    self.buf[i + 1] = 4;
+                    self.buf[i + 2..i + 6].copy_from_slice(&v.to_be_bytes());
                     i += 6;
                 }
                 Option::MessageType(value) => {

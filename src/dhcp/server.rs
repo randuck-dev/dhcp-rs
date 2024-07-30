@@ -3,6 +3,9 @@ use std::{fmt::format, net::UdpSocket};
 
 use std::time::Instant;
 
+use anyhow::{anyhow, Result};
+use log::info;
+
 use crate::dhcp::lease::{Lease, MACAddress};
 use crate::dhcp::lib::parse_dhcp_packet;
 
@@ -13,7 +16,7 @@ pub struct DhcpServer {
 }
 
 const DHCP_SERVER_PORT: u16 = 50010;
-const DHCP_CLIENT_PORT: u8 = 68;
+const DHCP_CLIENT_PORT: u16 = 68;
 
 impl DhcpServer {
     pub fn new() -> Self {
@@ -23,46 +26,22 @@ impl DhcpServer {
         }
     }
 
-    pub fn start(&self) {
+    pub fn run(&self) -> Result<()> {
         let address = format!("127.0.0.1:{}", DHCP_SERVER_PORT);
-        println!("DHCP Server started listening on address: {}", address);
+        let socket = UdpSocket::bind(&address)?;
 
-        let socket = match UdpSocket::bind(address) {
-            Ok(s) => s,
-            Err(e) => {
-                eprintln!("Failed to bind to port {}: {}", DHCP_SERVER_PORT, e);
-                return;
-            }
-        };
+        info!("DHCP Server started listening on address: {}", &address);
 
         loop {
             let mut buf = [0; 1024];
-            match socket.recv_from(&mut buf) {
-                Ok((size, src)) => {
-                    println!("Received {} bytes from {}", size, src);
-                    let start = Instant::now();
+            let (size, src) = socket.recv_from(&mut buf)?;
+            info!("Received {} bytes from {}", size, src);
+            let start = Instant::now();
 
-                    match parse_dhcp_packet(&buf) {
-                        Ok(packet) => match packet.get_client_identifier() {
-                            Ok(message_type) => {
-                                println!("CI: {:?}", message_type);
-                            }
-                            Err(e) => {
-                                eprintln!("Failed: {}", e);
-                            }
-                        },
-                        Err(e) => {
-                            eprintln!("Failed to parse packet: {:?}", e);
-                        }
-                    }
-                    let duration = start.elapsed();
-                    println!("Execution time: {:?}", duration);
-                }
-                Err(e) => {
-                    eprintln!("Failed to receive data: {}", e);
-                    break;
-                }
-            }
+            let packet = parse_dhcp_packet(&buf)?;
+
+            let duration = start.elapsed();
+            info!("Execution time: {:?}", duration);
         }
     }
 }
