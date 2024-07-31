@@ -1,15 +1,15 @@
 use std::collections::HashMap;
 use std::net::Ipv4Addr;
-use std::{fmt::format, net::UdpSocket};
+use std::net::UdpSocket;
 
 use std::time::Instant;
 
-use anyhow::{anyhow, Result};
-use log::info;
+use anyhow::Result;
+use log::{debug, info};
 
 use crate::dhcp;
-use crate::dhcp::lease::{Lease, MACAddress};
-use crate::dhcp::lib::parse_dhcp_packet;
+use crate::dhcp::lease::Lease;
+use crate::dhcp::lib::{parse_dhcp_packet, RawPacket};
 
 use super::packet::Packet;
 
@@ -17,35 +17,42 @@ pub struct DhcpServer {
     port: u16,
 
     lease_cache: HashMap<String, Lease>,
+
+    socket: Option<UdpSocket>,
 }
 
 const DHCP_SERVER_PORT: u16 = 50010;
-const DHCP_CLIENT_PORT: u16 = 68;
+const DHCP_CLIENT_PORT: u16 = 67;
 
 impl DhcpServer {
     pub fn new() -> Self {
         DhcpServer {
             port: DHCP_SERVER_PORT,
             lease_cache: HashMap::new(),
+
+            socket: None,
         }
     }
 
     pub fn run(&mut self) -> Result<()> {
         let address = format!("127.0.0.1:{}", DHCP_SERVER_PORT);
-        let socket = UdpSocket::bind(&address)?;
+        let s = UdpSocket::bind(&address)?;
+
+        self.socket = Some(s);
 
         info!("DHCP Server started listening on address: {}", &address);
 
         loop {
             let mut buf = [0; 1024];
-            let (size, src) = socket.recv_from(&mut buf)?;
-            info!("Received {} bytes from {}", size, src);
+            let (size, src) = self.socket.as_ref().unwrap().recv_from(&mut buf)?;
+            debug!("Received {} bytes from {}", size, src);
             let start = Instant::now();
 
             let packet = parse_dhcp_packet(&buf)?;
 
-            match packet.get_message_type()? {
-                dhcp::messagetype::MessageType::DHCPREQUEST => self.send_dhcp_ack(packet)?,
+            let msg_type = packet.get_message_type()?;
+            match msg_type {
+                dhcp::messagetype::MessageType::DHCPREQUEST => self.handle_dhcprequest(packet)?,
                 dhcp::messagetype::MessageType::DHCPDECLINE => self.handle_decline(packet)?,
                 dhcp::messagetype::MessageType::DHCPDISCOVER => self.handle_discover(packet)?,
                 dhcp::messagetype::MessageType::DHCPINFORM => self.handle_inform(packet)?,
@@ -57,13 +64,13 @@ impl DhcpServer {
             }
 
             let duration = start.elapsed();
-            info!("Execution time: {:?}", duration);
+            debug!("Execution time: {:?}", duration);
         }
     }
 
-    fn send_dhcp_ack(&mut self, packet: Packet) -> Result<()> {
+    fn handle_dhcprequest(&mut self, packet: Packet) -> Result<()> {
+        info!("send_dhcp_ack: DHCPREQUEST -> DHPACK");
         let mac_address = packet.get_client_identifier()?;
-        info!("ClientIdentifier: {}", mac_address);
 
         let ipaddr = Ipv4Addr::new(192, 168, 1, 69);
         let expiration_s = 60 * 60 * 24;
@@ -71,14 +78,18 @@ impl DhcpServer {
 
         match self.lease_cache.get(&mac_address) {
             Some(l) => {
-                info!("Already holding lease")
+                debug!("Already holding lease")
             }
             None => {
-                info!("Not holding lease, creating new and inserting");
+                debug!("Not holding lease, creating new and inserting");
                 self.lease_cache.insert(mac_address, lease.clone());
             }
         }
-        info!("Sending to client");
+        let mut rp = RawPacket::default(dhcp::messagetype::MessageType::DHCPACK);
+        rp.set_xid(packet.xid);
+        rp.set_client_ip_address(ipaddr);
+
+        self.send(rp)?;
 
         Ok(())
     }
@@ -88,10 +99,16 @@ impl DhcpServer {
     }
 
     fn handle_discover(&self, packet: Packet) -> Result<()> {
-        info!("handle_discover: Received request from client to ask for a DHCP server. Lucky us");
+        info!("handle_discover: DHCPDISCOVER -> DHCPOFFER");
 
         let mac_address = packet.get_client_identifier()?;
         info!("address: {}", &mac_address);
+
+        let mut rp = RawPacket::default(dhcp::messagetype::MessageType::DHCPOFFER);
+        rp.set_xid(packet.xid);
+
+        self.send(rp)?;
+
         Ok(())
     }
 
@@ -101,5 +118,15 @@ impl DhcpServer {
 
     fn handle_release(&self, packet: Packet) -> Result<()> {
         todo!()
+    }
+
+    fn send(&self, raw: RawPacket) -> Result<()> {
+        let addr = format!("127.0.0.1:{}", DHCP_CLIENT_PORT);
+
+        let s = self.socket.as_ref().unwrap();
+        s.set_broadcast(true)?;
+        s.send_to(&raw.buf, addr)?;
+
+        Ok(())
     }
 }

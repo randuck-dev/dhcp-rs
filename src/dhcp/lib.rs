@@ -1,3 +1,5 @@
+use std::net::Ipv4Addr;
+
 use anyhow::Result;
 
 use super::{errors::DhcpError, messagetype::MessageType, option::Option, packet::Packet};
@@ -115,7 +117,7 @@ impl RawPacket {
         RawPacket { buf: [0; 1024] }
     }
 
-    pub(crate) fn default() -> Self {
+    pub(crate) fn default(msg_type: MessageType) -> Self {
         let mut p = RawPacket::new();
         p.set_op(OpType::BOOTREQUEST);
         p.set_htype(1);
@@ -126,7 +128,7 @@ impl RawPacket {
         p.set_broadcast(true);
         p.set_options(vec![
             MAGIC_COOKIE,
-            Option::MessageType(MessageType::DHCPDISCOVER),
+            Option::MessageType(msg_type),
             Option::SubnetMask([255, 255, 255, 0]),
             Option::ClientIdentifier(1, vec![1, 2, 3]),
             Option::End(),
@@ -165,6 +167,11 @@ impl RawPacket {
 
     pub(crate) fn set_broadcast(&mut self, broadcast: bool) {
         self.buf[10] = if broadcast { 0b10000000 } else { 0 };
+    }
+
+    pub fn set_client_ip_address(&mut self, ip_addr: Ipv4Addr) {
+        let bytes = ip_addr.to_bits().to_be_bytes();
+        self.buf[16..20].copy_from_slice(&bytes);
     }
 
     pub(crate) fn set_options(&mut self, options: Vec<Option>) {
@@ -209,6 +216,8 @@ impl RawPacket {
                     self.buf[i + 1] = value;
                     i += 2;
                 }
+
+                // TODO: This must be done in the end outside of the loop! The last option MUST be the end option
                 Option::End() => {
                     self.buf[i] = 255;
                     i += 1;
@@ -238,7 +247,7 @@ mod tests {
 
     #[test]
     fn test_parse_packet() {
-        let raw_packet = RawPacket::default();
+        let raw_packet = RawPacket::default(MessageType::DHCPDISCOVER);
 
         let packet = match raw_packet.into_packet() {
             Ok(packet) => packet,
@@ -267,7 +276,7 @@ mod tests {
 
     #[test]
     fn should_parse_client_identifier() {
-        let mut raw_packet = RawPacket::default();
+        let mut raw_packet = RawPacket::default(MessageType::DHCPDISCOVER);
 
         let packet = raw_packet.into_packet().unwrap();
 
@@ -288,7 +297,7 @@ mod tests {
 
     #[test]
     fn should_fail_on_non_present_magic_cookie() {
-        let mut raw_packet = RawPacket::default();
+        let mut raw_packet = RawPacket::default(MessageType::DHCPDISCOVER);
         raw_packet.set_options(vec![Option::MessageType(MessageType::DHCPDISCOVER)]);
 
         let result = raw_packet.into_packet();
