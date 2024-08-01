@@ -9,7 +9,7 @@ use log::{debug, info};
 
 use crate::dhcp;
 use crate::dhcp::lease::Lease;
-use crate::dhcp::lib::{parse_dhcp_packet, RawPacket};
+use crate::dhcp::{parse_dhcp_packet, RawPacket};
 
 use super::packet::Packet;
 

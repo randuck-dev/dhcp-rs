@@ -1,8 +1,8 @@
 use anyhow::{anyhow, Result};
 
-use super::lib::{Flags, OpType};
 use super::messagetype::MessageType;
 use super::option::Option;
+use super::{Flags, OpType};
 
 #[derive(Debug)]
 pub(crate) struct Packet {
